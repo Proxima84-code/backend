@@ -174,6 +174,15 @@ export class EscrowService {
     // observes the RELEASED status written by the first and is rejected —
     // instead of both passing the LOCKED check and double-paying (#303).
     return this.withLockedEscrow(escrowId, async (escrow, manager) => {
+      const existingPayments = await manager.find(Payment, {
+        where: { escrowId: escrow.id },
+      });
+      if (existingPayments.length > 0) {
+        throw new BadRequestException(
+          `Cannot release escrow ${escrow.id}: prior payments exist; use releasePartial instead`,
+        );
+      }
+
       const result = await this.invokeRelease(
         escrow,
         'release',
@@ -229,6 +238,15 @@ export class EscrowService {
     // Same pessimistic row lock as release(): concurrent split releases for
     // one escrow must serialise rather than each observing LOCKED (#303).
     return this.withLockedEscrow(escrowId, async (escrow, manager) => {
+      const existingPayments = await manager.find(Payment, {
+        where: { escrowId: escrow.id },
+      });
+      if (existingPayments.length > 0) {
+        throw new BadRequestException(
+          `Cannot split release escrow ${escrow.id}: prior payments exist; use releasePartial instead`,
+        );
+      }
+
       const totalStroops = amountToStroops(escrow.amount);
       // Single source of truth for the split: integer basis points summing to
       // exactly 10,000 (100.00%), used both on-chain and to derive the ledger.
@@ -584,20 +602,14 @@ export class EscrowService {
     recipients: Array<[string, number]>,
     manager?: EntityManager,
   ): Promise<ContractInvocationResult> {
-    return this.invokeOnLockedEscrow(escrow, operation, () =>
-      this.soroban.invoke(
-        'release',
-        // `release(issue_id: u64, recipients)` — u64-typed on-chain (#301).
-        [u64(this.onChainKeyFor(escrow)), recipients],
-        this.contractOpts(escrow),
-      ),
     return this.invokeOnLockedEscrow(
       escrow,
       operation,
       () =>
         this.soroban.invoke(
           'release',
-          [this.onChainKeyFor(escrow), recipients],
+          // `release(issue_id: u64, recipients)` — u64-typed on-chain (#301).
+          [u64(this.onChainKeyFor(escrow)), recipients],
           this.contractOpts(escrow),
         ),
       manager,

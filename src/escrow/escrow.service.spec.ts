@@ -123,7 +123,7 @@ describe('EscrowService', () => {
       expect(args[0]).toEqual(u64(4242n));
       expect(args[1]).toBe('GABC...FUNDER');
       expect(args[3]).toBe(1_000_000_000n);
-      expect(typeof args[4]).toBe('bigint');
+      expect(typeof args[4]).toBe('object');
       expect(escrow.status).toBe(EscrowStatus.LOCKED);
       expect(escrow.fundTxHash).toBe('tx-hash-123');
     });
@@ -395,6 +395,23 @@ describe('EscrowService', () => {
       );
     });
 
+    it('rejects release if prior payments exist to prevent double payout (#44)', async () => {
+      escrowRepo.findOne.mockResolvedValue({
+        id: 'escrow-3',
+        status: EscrowStatus.LOCKED,
+        amount: '100',
+        asset: AssetType.USDC,
+      });
+      paymentRepo.find.mockResolvedValue([
+        { id: 'pay-1', escrowId: 'escrow-3', amount: '40' },
+      ]);
+
+      await expect(
+        service.release('escrow-3', 'GRECIPIENT', 'user-1'),
+      ).rejects.toThrow(BadRequestException);
+      expect(soroban.invoke).not.toHaveBeenCalled();
+    });
+
     it('writes the escrow status and the Payment in one transaction (#154)', async () => {
       escrowRepo.findOne.mockResolvedValue({
         id: 'escrow-3',
@@ -443,6 +460,20 @@ describe('EscrowService', () => {
   });
 
   describe('releasePartial', () => {
+    it('rejects releasePartial if escrow is already RELEASED (#44)', async () => {
+      escrowRepo.findOne.mockResolvedValue({
+        id: 'escrow-done',
+        status: EscrowStatus.RELEASED,
+        amount: '100',
+        asset: AssetType.USDC,
+      });
+
+      await expect(
+        service.releasePartial('escrow-done', '20', 'GRECIPIENT', 'user-1'),
+      ).rejects.toThrow(BadRequestException);
+      expect(soroban.invoke).not.toHaveBeenCalled();
+    });
+
     const lockedEscrow = () => ({
       id: 'escrow-partial',
       status: EscrowStatus.LOCKED,
